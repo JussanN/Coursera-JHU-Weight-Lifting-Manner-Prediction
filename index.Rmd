@@ -1,0 +1,265 @@
+---
+title: "Practical Machine Learning Coursera - Final Project"
+author: "Jussan Da Silva Bahia Nascimento"
+date: "2023-02-17"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## 1.Background
+
+This the final project of the Practical machine learning course from Johns Hopkins University on Coursera.
+
+## 2.Goal
+
+In this project, I will have to use the data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+The goal of this project is to predict the manner in which they did the exercise. This is the "classe" variable in the training set. Moreover we have to describe how the model was built, how cross validation is used, what is the expected out of sample error, and why the choices were made.  
+
+## 3.Data preparation
+
+Loading packages for the analysis 
+
+```{r, message=FALSE}
+#Loading packages
+library(caret)
+library(ggplot2)
+library(ggcorrplot)
+library(parallel)
+library(doParallel)
+```
+
+Loading dataset 
+
+```{r, echo=TRUE}
+#Loading data
+trainingTemp <- read.csv("pml-training.csv")
+validation <- read.csv("pml-testing.csv")
+```
+
+## 4.Exploratory analysis
+
+```{r, echo=TRUE}
+#datasets' dimension
+dim(trainingTemp)
+dim(validation)
+
+#Overview of the first rows
+head(trainingTemp)
+head(validation)
+```
+
+#### 4.1 Creating training and testing set randomly
+
+Training and Testing set are created randomly considering sizes of 70% and 30% respectively. These datasetes will be used for the Cross-validation later.
+
+```{r, echo=TRUE}
+set.seed(123)
+inTrain <- createDataPartition(y=trainingTemp$classe,
+                               p=0.7, list=FALSE)
+
+training <- trainingTemp[inTrain,] 
+testing <- trainingTemp[-inTrain,]
+
+#datasets' dimension
+dim(training)
+dim(testing)
+
+#Checking proportions of each classe and its level.
+prop.table(table(training$classe))
+```
+
+#### 4.2 Checking NAs and Null rows
+
+It's important to treat the NAs and/or Null values as the datasets need to be completed in order to train the machine learning models.
+
+```{r, echo=TRUE}
+#checking NAs
+colSums(is.na(training))
+```
+
+We can observe that some colunms has thousands of NAs which represents aound 98% of the total rows. This columns will be removed as it has very few information for model training and predictions.
+
+```{r, echo=TRUE}
+#98% of rows with NAs will be removed form the training dataset
+training <- training[ , colSums(is.na(training))<13451]
+
+#double checking if columns were removed
+colSums(is.na(training))
+```
+
+```{r, echo=TRUE}
+#checking Null values
+colSums(training=="")
+
+```
+
+The same situation is observed for the Null values. Some columns have thousands of Null values with represents aound 98% of the total rows. This columns will also be removed as it has very few information for model training and predictions.
+
+```{r, echo=TRUE}
+##98% of rows with NAs will be removed form the training dataset
+training <- training[ , colSums(training=="")<13451] 
+
+#double checking empty rows
+colSums(training=="")
+```
+
+#### 4.3 Checking Dataset structure
+
+In this session I checked the structure of the data and the classes of each variable making sure they are in the correct format for the modelling part.  
+
+```{r, echo=TRUE}
+str(training)
+
+training <- subset(training,select=-c(X))
+
+training$classe <- as.factor(training$classe)
+training$user_name <- as.factor(training$user_name)
+training$new_window <- as.factor(training$new_window)
+training$cvtd_timestamp <- strptime(training$cvtd_timestamp, format = "%d/%m/%Y %H:%M")
+training$cvtd_timestamp <- as.POSIXct(training$cvtd_timestamp)
+training$cvtd_timestamp <- as.numeric(training$cvtd_timestamp)
+```
+
+Variable X is excluded as it looks like a row number and it's not mentioned at all in the website of the research. Moreover character variables are converting to factor or numeric variable depending on its nature.
+
+## 5.Feature selection
+
+Feature selection is an important steps as:
+
+-- Provides better Accuracy: removing irrelevant features let the models make decisions only using important features. 
+
+-- Avoid Overfitting: the models will not put weights in irrelevant features.
+
+-- Improve running time: decreasing the dimension of the data makes the models run faster.
+
+So I started the feature selection process by identifying and removing highly correlated independent variables, as they are redundant. Although multicollinearity doesn’t affect the model’s performance, it will affect the interpretability. If we don’t remove the multicollinearity, we will never know how much a variable contributes to the result.
+
+```{r, echo=TRUE}
+#copying training set
+training_aux <- training
+
+#converting factor variables to numeric to use in correlation analysis
+training_aux$classe <- as.numeric(training_aux$classe)
+training_aux$new_window <- as.numeric(training_aux$new_window)
+training_aux$user_name <- as.numeric(training_aux$user_name)
+
+#checking correlation matrix
+cor_matrix <- data.frame(cor(training_aux))
+ggcorrplot(cor_matrix)
+```
+
+We can observe from the correlation Matrix that some independent variables are correlated to each other. I use the findCorrelation from Caret package. If two variables have a higher correlation than the cutoff, the function removes the variable with the largest mean absolute correlation.
+
+```{r, echo=TRUE}
+fCorr <- findCorrelation(cor(subset(training_aux,select=-c(classe))), cutoff=0.75)
+names(training_aux[,fCorr])
+
+training <- training[ ,!names(training) %in% names(training_aux[,fCorr])]
+```
+
+I can then check the variable importance of the remaining variables using the filterVarImp function from the Caret package as well. For classification, this function uses ROC curve analysis on each predictor and use area under the curve as scores.
+
+```{r, echo=TRUE}
+#use roc_curve area as score
+roc_imp <- filterVarImp(x = training[,1:35], y = training$classe)
+
+#sort the score in decreasing order
+roc_imp <- data.frame(cbind(variable = rownames(roc_imp), score = roc_imp[,1]))
+roc_imp$score <- as.double(roc_imp$score)
+roc_imp[order(roc_imp$score,decreasing = TRUE),]
+```
+
+As we can observe all variables have more less the same score (varying between 0.50 and 0.60).
+Before moving to evaluating machine learning algorithms, I prepare the testing and validating sets to make sure they are all aligned with the training set in terms of variables and variable type. 
+
+```{r, echo=TRUE}
+#filtering Validation and Testing datasets with the same columns in the Training dataset 
+validation <- validation[ ,names(validation) %in% names(training)]
+testing <- testing[ ,names(testing) %in% names(training)]
+
+#getting classes
+trainingClass <- sapply(subset(training,select=-c(classe)), class)
+testingClass <- sapply(subset(testing,select=-c(classe)), class)
+validationClass <- sapply(validation, class)
+
+#comparing classes from the different variables between the two datasets
+colClassCheck <- data.frame(trainingCol = trainingClass, 
+                            testingCol = testingClass,
+                            validationCol = validationClass,
+                            TrainingVsTesting =  (trainingClass == testingClass),
+                            TrainingVsValidation =  (trainingClass == validationClass))
+colClassCheck
+
+#converting variables
+testing$classe <- as.factor(testing$classe)
+testing$user_name <- as.factor(testing$user_name)
+testing$new_window <- as.factor(testing$new_window)
+
+validation$user_name <- as.factor(validation$user_name)
+validation$new_window <- as.factor(validation$new_window)
+validation$magnet_dumbbell_z <- as.numeric(validation$magnet_dumbbell_z)
+validation$magnet_forearm_y <- as.numeric(validation$magnet_forearm_y)
+validation$magnet_forearm_z <- as.numeric(validation$magnet_forearm_z)
+```
+
+## 6.Evaluating Machine Learning Algorithms.
+
+#### 6.1 Cross-validation
+
+In this section I use the two of the most used machine learning algorithms, Random forest and Boosting. Using these algorithms, I perform Cross-validation using 10 K-folds and compute the average accuracy of each one of the models. I use the parallel processing to run the models faster.
+
+```{r, echo=TRUE}
+#parallel processing setup
+cluster <- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
+registerDoParallel(cluster)
+
+#cross-validation setup
+fitControl <- trainControl(method = "cv",
+                           number = 10,
+                           allowParallel = TRUE)
+
+
+#training the models
+fit.rf <- train(classe ~ ., method="rf",data=training,trControl=fitControl)
+fit.gbm <- train(classe ~., method="gbm",data=training, verbose=FALSE,trControl=fitControl)
+
+#stopping parallel processing
+stopCluster(cluster)
+registerDoSEQ()
+
+#checking model's average accuracy 
+confusionMatrix.train(fit.rf)
+confusionMatrix.train(fit.gbm)
+```
+
+As we can see, random forest gives us the best accuracy.
+
+
+#### 6.2 Validation
+
+Finally I check the accuracy of each model on the testing set. This will give us an independent final check on the accuracy of the best model. I run the models on the testing set and summarize the results in a confusion matrix.
+
+```{r, echo=TRUE}
+pred.rf <- predict(fit.rf, newdata = testing)
+confusionMatrix(pred.rf, testing$classe)
+
+pred.gbm <- predict(fit.gbm, newdata = testing)
+confusionMatrix(pred.gbm, testing$classe)
+```
+
+Random forest is the model selected with the highest accuracy.
+
+## 7.Quiz
+
+For the final QUIZ I use the Random forest model selected previously and apply it on the validation set.
+
+```{r, echo=TRUE, results=FALSE}
+pred <- predict(fit.rf, newdata = validation)
+pred
+
+data.frame(case = c(1:20), pred)
+```
