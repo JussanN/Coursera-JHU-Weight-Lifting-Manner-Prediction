@@ -10,6 +10,6 @@ The goal of this project is to predict the manner in which they did the exercise
 
 ## Analysis
 
-Github page with the analysis: https://jussann.github.io/Pratical-Machine-Learning-Coursera-JHU/
+Github page containing the analysis: https://jussann.github.io/Pratical-Machine-Learning-Coursera-JHU/
 
-The R markdonw file is the index.rmd
+The R markdown file is in the index.Rmd
