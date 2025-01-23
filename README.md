@@ -1,4 +1,4 @@
-# Pratical-Machine-Learning-Coursera-JHU
+# Predicting the Manner of Weight Lifting Exercise
 
 This the final project of the Practical machine learning course from Johns Hopkins University on Coursera.
 
